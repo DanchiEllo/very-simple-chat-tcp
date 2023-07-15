@@ -1,73 +1,65 @@
 package com.chat;
 
-import java.io.*;
-import java.net.Socket;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.UnknownHostException;
+import java.util.ArrayList;
 
-public class TCPConnection {
-
-    private final Socket socket;
-    private final Thread rxThread;
-    private final TCPConnectionListener eventListener;
-    private final BufferedReader in;
-    private final BufferedWriter out;
-
-
-    public TCPConnection(TCPConnectionListener eventListener, String ipAddr, int port) throws IOException{
-        this(eventListener, new Socket(ipAddr, port));
-
+public class ChatServer implements TCPConnectionListener{
+    public static void main(String[] args) {
+        new ChatServer();
 
     }
 
-    public TCPConnection(TCPConnectionListener eventListener, Socket socket) throws IOException {
-        this.eventListener = eventListener;
-        this.socket = socket;
-        in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-        out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
-        rxThread = new Thread(new Runnable() {
-            @Override
-            public void run() {
+    private final ArrayList<TCPConnection> connections = new ArrayList<>();
+    private ChatServer() {
+        System.out.println("Server running");
+        try {
+            System.out.println(InetAddress.getLocalHost());
+        } catch (UnknownHostException e) {
+            throw new RuntimeException(e);
+        }
+        try (ServerSocket serverSocket = new ServerSocket(/*Your port*/)) {
+            while(true) {
                 try {
-                    eventListener.onConnectionReady(TCPConnection.this);
-                    while (!rxThread.isInterrupted()) {
-                        String msg = in.readLine();
-                        eventListener.onReceiveString(TCPConnection.this, msg);
-                    }
-
+                    new TCPConnection(this, serverSocket.accept());
                 } catch (IOException e) {
-                    eventListener.onException(TCPConnection.this, e);
-                } finally {
-                    eventListener.onDisconnect(TCPConnection.this);
+                    System.out.println("TCPConnection exception: " + e);
                 }
             }
-        });
-        rxThread.start();
-    }
-
-    public void sendString(String value) {
-        try {
-            out.write(value + "\r\n");
-            out.flush();
         } catch (IOException e) {
-            eventListener.onException(TCPConnection.this, e);
-            disconnect();
-        }
-    }
-
-    public synchronized void disconnect() {
-        rxThread.interrupt();
-        try {
-            socket.close();
-        } catch (IOException e) {
-            eventListener.onException(TCPConnection.this, e);
             throw new RuntimeException(e);
         }
     }
 
+
     @Override
-    public String toString() {
-        return "TCPConnectoin: " + socket.getInetAddress() + ": " + socket.getPort();
+    public synchronized void onConnectionReady(TCPConnection tcpConnection) {
+        connections.add(tcpConnection);
+        sendToAllConnections("Client connected: " + tcpConnection);
     }
 
+    @Override
+    public synchronized void onReceiveString(TCPConnection tcpConnection, String value) {
+        sendToAllConnections(value);
+    }
+
+    @Override
+    public synchronized void onDisconnect(TCPConnection tcpConnection) {
+        System.out.println("TCPConnection exception" + tcpConnection);
+    }
+
+    @Override
+    public synchronized void onException(TCPConnection tcpConnection, Exception e) {
+        System.out.println("TCPConnection exception: " + e);
+    }
+
+    private void sendToAllConnections(String value) {
+        System.out.println(value);
+        final int cnt = connections.size();
+        for (int i = 0; i < cnt; i++) {
+            connections.get(i).sendString(value);
+        }
+    }
 }
